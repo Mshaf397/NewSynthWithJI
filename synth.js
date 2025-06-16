@@ -1,4 +1,4 @@
-const keyboard = document.getElementById('keyboard');
+(const keyboard = document.getElementById('keyboard');
 const numRowsInput = document.getElementById('numRows');
 const numColsInput = document.getElementById('numCols');
 const rootNoteInput = document.getElementById('rootNote');
@@ -156,7 +156,7 @@ function wireKeysToPlay() {
     key.onmousedown = (e) => {
       e.preventDefault();
       const i = parseInt(key.dataset.index, 10);
-      const freq = calculateFrequency(i - rootNote);
+      const freq = calculateFrequency(i);
       key.classList.add('active');
       playNote(freq, key);
     };
