@@ -116,7 +116,6 @@ function createKeyboard(rows, cols) {
 
 function playNote(freq, keyElement) {
   if (!freq) return;
-
   if (activeOscillators.has(keyElement)) return; // prevent retrigger while active
 
   const osc = audioCtx.createOscillator();
@@ -126,7 +125,6 @@ function playNote(freq, keyElement) {
   osc.frequency.value = freq;
 
   gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 2);
 
   osc.connect(gain);
   gain.connect(audioCtx.destination);
@@ -134,15 +132,16 @@ function playNote(freq, keyElement) {
   osc.start();
 
   activeOscillators.set(keyElement, { osc, gain });
-
+  keyElement.classList.add('active');
 }
 
 function stopNote(keyElement) {
   const active = activeOscillators.get(keyElement);
   if (active) {
-    active.gain.gain.cancelScheduledValues(audioCtx.currentTime);
-    active.gain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.01);
-    active.osc.stop(audioCtx.currentTime + 0.05);
+    const now = audioCtx.currentTime;
+    active.gain.gain.cancelScheduledValues(now);
+    active.gain.gain.setTargetAtTime(0, now, 0.05); // smooth fade out
+    active.osc.stop(now + 0.05);
     activeOscillators.delete(keyElement);
     keyElement.classList.remove('active');
   }
