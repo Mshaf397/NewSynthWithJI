@@ -39,15 +39,24 @@ function createKeyboard(rows, cols) {
   keyboard.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
 
   const totalKeys = rows * cols;
+  const rootFreq = calculateFrequency(0); // i - rootNote = 0
 
   for (let i = 0; i < totalKeys; i++) {
     const key = document.createElement('div');
     key.classList.add('key');
-
-    const name = (noteNames.length > i) ? noteNames[i] : (i + 1);
-    key.textContent = name;
-
     key.dataset.index = i;
+
+    const stepFromRoot = i - rootNote;
+    const freq = calculateFrequency(stepFromRoot);
+    const centsFromRoot = Math.round(1200 * Math.log2(freq / rootFreq));
+
+    const name = (noteNames.length > i) ? noteNames[i] : `Key ${i}`;
+
+    key.innerHTML = `
+      <div class="name">${name}</div>
+      <div class="cent">${centsFromRoot >= 0 ? '+' : ''}${centsFromRoot}¢</div>
+    `;
+
     keyboard.appendChild(key);
   }
 }
