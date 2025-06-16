@@ -135,12 +135,6 @@ function playNote(freq, keyElement) {
 
   activeOscillators.set(keyElement, { osc, gain });
 
-  // Clean up after 2 seconds
-  setTimeout(() => {
-    osc.stop();
-    activeOscillators.delete(keyElement);
-    keyElement.classList.remove('active');
-  }, 2000);
 }
 
 function stopNote(keyElement) {
