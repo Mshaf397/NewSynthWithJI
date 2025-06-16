@@ -156,7 +156,7 @@ function wireKeysToPlay() {
     key.onmousedown = (e) => {
       e.preventDefault();
       const i = parseInt(key.dataset.index, 10);
-      const freq = calculateFrequency(i);
+      const freq = calculateFrequency(i - rootNote);
       key.classList.add('active');
       playNote(freq, key);
     };
