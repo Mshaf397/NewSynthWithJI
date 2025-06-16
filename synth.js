@@ -39,7 +39,7 @@ function createKeyboard(rows, cols) {
   keyboard.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
 
   const totalKeys = rows * cols;
-  const rootFreq = calculateFrequency(0); // i - rootNote = 0
+  const rootFreq = calculateFrequency(0);
 
   for (let i = 0; i < totalKeys; i++) {
     const key = document.createElement('div');
@@ -50,7 +50,13 @@ function createKeyboard(rows, cols) {
     const freq = calculateFrequency(stepFromRoot);
     const centsFromRoot = Math.round(1200 * Math.log2(freq / rootFreq));
 
-    const name = (noteNames.length > i) ? noteNames[i] : `Key ${i}`;
+    let name;
+    if (noteNames.length > 0) {
+      const wrappedIndex = ((stepFromRoot % noteNames.length) + noteNames.length) % noteNames.length;
+      name = noteNames[wrappedIndex];
+    } else {
+      name = `Key ${i}`;
+    }
 
     key.innerHTML = `
       <div class="name">${name}</div>
