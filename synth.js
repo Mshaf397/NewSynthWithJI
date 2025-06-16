@@ -1,45 +1,185 @@
+// == Synth state ==
 const keyboard = document.getElementById('keyboard');
-const applySettingsBtn = document.getElementById('applySettings');
-
+const baseFreqInput = document.getElementById('baseFreq');
 const rowsInput = document.getElementById('rows');
 const colsInput = document.getElementById('cols');
-const rootNoteBox = document.getElementById('rootNoteBox');
-const baseFreqInput = document.getElementById('baseFreq');
+const rootNoteInput = document.getElementById('rootNote');
 const tuningInput = document.getElementById('tuning');
-const mappingInput = document.getElementById('mapping');
 const noteNamesInput = document.getElementById('noteNames');
 
-const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-const activeOscillators = new Map();
+let audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+let activeOscillators = new Map(); // keyIndex -> oscillator node
 
+// Synth parameters
+let baseFreq = 261.63;
+let rows = 4;
+let cols = 12;
 let rootNote = 0;
-let baseFreq = 440;
-let tuning = '12ed2';
-let mapping = [];
 let noteNames = [];
+let tuningData = { type: "edo", steps: 12, interval: 2, ratios: [] };
 
-applySettingsBtn.onclick = applySettings;
+// --- UTILITIES ---
 
-function applySettings() {
-  const rows = parseInt(rowsInput.value, 10) || 1;
-  const cols = parseInt(colsInput.value, 10) || 1;
-  rootNote = parseInt(rootNoteBox.value, 10) || 0;
-  baseFreq = parseFloat(baseFreqInput.value) || 440;
-  tuning = tuningInput.value.trim();
-  noteNames = noteNamesInput.value.trim().split(',').map(n => n.trim());
-
-  mapping = mappingInput.value.trim().split(',').map(x => parseFloat(x.trim())).filter(x => !isNaN(x));
-
-  createKeyboard(rows, cols);
-  wireKeysToPlay();
+// GCD function
+function gcd(a, b) {
+  while (b !== 0) {
+    let t = b;
+    b = a % b;
+    a = t;
+  }
+  return a;
 }
+
+// Prime factors for odd part only
+function primeFactors(n) {
+  const factors = [];
+  let x = n;
+  for (let i = 2; i <= x; i++) {
+    while (x % i === 0) {
+      factors.push(i);
+      x /= i;
+    }
+  }
+  return factors;
+}
+
+// Check allowed odd prime factors ≤ z (excluding 2)
+function allowedFactors(n, z) {
+  while (n % 2 === 0) n /= 2;
+  if (n === 1) return true;
+  const factors = primeFactors(n);
+  return factors.every(f => f <= z && f !== 2);
+}
+
+// Normalize ratio into [1, 2)
+function normalizeRatio(ratio) {
+  while (ratio < 1) ratio *= 2;
+  while (ratio >= 2) ratio /= 2;
+  return ratio;
+}
+
+// Generate all ratios within z-limit JI tuning
+function generateZLimitRatios(z) {
+  const ratioSet = new Set();
+
+  for (let numerator = 1; numerator <= z; numerator += 2) {
+    if (!allowedFactors(numerator, z)) continue;
+
+    for (let denominator = 1; denominator <= z; denominator += 2) {
+      if (!allowedFactors(denominator, z)) continue;
+
+      const g = gcd(numerator, denominator);
+      const num = numerator / g;
+      const den = denominator / g;
+
+      const ratio = normalizeRatio(num / den);
+
+      ratioSet.add(ratio.toFixed(10));
+    }
+  }
+
+  // Convert back to numbers and sort ascending
+  const ratios = Array.from(ratioSet).map(Number).sort((a, b) => a - b);
+  return ratios;
+}
+
+// Parse tuning string and produce tuning data object
+function parseTuning(tuningStr) {
+  tuningStr = tuningStr.trim().toLowerCase();
+
+  // Equal division of interval (assumed octave = 2)
+  if (/^\d+ed2$/.test(tuningStr)) {
+    const x = parseInt(tuningStr);
+    if (!isNaN(x) && x > 0) {
+      return { type: "edo", steps: x, interval: 2 };
+    }
+  }
+
+  // z-limit JI tuning, e.g. "5-limit"
+  if (tuningStr.endsWith("-limit")) {
+    const zStr = tuningStr.slice(0, tuningStr.length - 6);
+    const z = parseInt(zStr);
+    if (!isNaN(z) && z % 2 === 1 && z >= 3) {
+      const ratios = generateZLimitRatios(z);
+      return { type: "z-limit", z, ratios };
+    }
+  }
+
+  // Default fallback
+  return { type: "edo", steps: 12, interval: 2 };
+}
+
+// Calculate frequency for given step (distance from root)
+function calculateFrequency(step, tuningData, baseFreq) {
+  if (tuningData.type === "edo") {
+    return baseFreq * Math.pow(tuningData.interval, step / tuningData.steps);
+  }
+  if (tuningData.type === "z-limit") {
+    const len = tuningData.ratios.length;
+    // wrap index cyclically
+    const idx = ((step % len) + len) % len;
+    return baseFreq * tuningData.ratios[idx];
+  }
+  return baseFreq;
+}
+
+// Calculate cents difference from base frequency
+function calculateCents(freq, baseFreq) {
+  return Math.round(1200 * Math.log2(freq / baseFreq));
+}
+
+// --- NOTE NAME UTILITIES ---
+// Cycle forward/backward over noteNames array
+function getNoteNameForStep(step) {
+  if (noteNames.length === 0) return `Key ${step}`;
+  const len = noteNames.length;
+  const idx = ((step % len) + len) % len;
+  return noteNames[idx];
+}
+
+// --- AUDIO CONTROLS ---
+
+function playNote(keyIndex) {
+  if (activeOscillators.has(keyIndex)) return; // already playing
+
+  const stepFromRoot = keyIndex - rootNote;
+  const freq = calculateFrequency(stepFromRoot, tuningData, baseFreq);
+
+  const osc = audioCtx.createOscillator();
+  const gainNode = audioCtx.createGain();
+
+  osc.frequency.value = freq;
+  osc.type = 'sine';
+
+  gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+
+  osc.connect(gainNode);
+  gainNode.connect(audioCtx.destination);
+
+  osc.start();
+
+  activeOscillators.set(keyIndex, { osc, gainNode });
+}
+
+function stopNote(keyIndex) {
+  const oscData = activeOscillators.get(keyIndex);
+  if (!oscData) return;
+
+  // Fade out smoothly
+  oscData.gainNode.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.03);
+
+  oscData.osc.stop(audioCtx.currentTime + 0.03);
+  activeOscillators.delete(keyIndex);
+}
+
+// --- KEYBOARD RENDERING ---
 
 function createKeyboard(rows, cols) {
   keyboard.innerHTML = '';
   keyboard.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
 
   const totalKeys = rows * cols;
-  const rootFreq = calculateFrequency(0);
+  const rootFreq = calculateFrequency(0, tuningData, baseFreq);
 
   for (let i = 0; i < totalKeys; i++) {
     const key = document.createElement('div');
@@ -47,166 +187,69 @@ function createKeyboard(rows, cols) {
     key.dataset.index = i;
 
     const stepFromRoot = i - rootNote;
-    const freq = calculateFrequency(stepFromRoot);
-    const centsFromRoot = Math.round(1200 * Math.log2(freq / rootFreq));
+    const freq = calculateFrequency(stepFromRoot, tuningData, baseFreq);
+    const centsFromRoot = calculateCents(freq, rootFreq);
 
-    let name;
-    if (noteNames.length > 0) {
-      const wrappedIndex = ((stepFromRoot % noteNames.length) + noteNames.length) % noteNames.length;
-      name = noteNames[wrappedIndex];
-    } else {
-      name = `Key ${i}`;
-    }
+    const noteName = getNoteNameForStep(stepFromRoot);
 
     key.innerHTML = `
-      <div class="name">${name}</div>
+      <div class="name">${noteName}</div>
       <div class="cent">${centsFromRoot >= 0 ? '+' : ''}${centsFromRoot}¢</div>
     `;
+
+    // Mouse/touch events for polyphonic sustain
+    key.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      playNote(i);
+    });
+    key.addEventListener('mouseup', () => {
+      stopNote(i);
+    });
+    key.addEventListener('mouseleave', () => {
+      stopNote(i);
+    });
+
+    // Touch events for mobile
+    key.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      playNote(i);
+    });
+    key.addEventListener('touchend', () => {
+      stopNote(i);
+    });
+    key.addEventListener('touchcancel', () => {
+      stopNote(i);
+    });
 
     keyboard.appendChild(key);
   }
 }
 
-function wireKeysToPlay() {
-  const keys = document.querySelectorAll('.key');
+// --- APPLY SETTINGS ---
 
-  keys.forEach(key => {
-    const i = parseInt(key.dataset.index, 10);
+function applySettings() {
+  baseFreq = parseFloat(baseFreqInput.value) || 261.63;
+  rows = Math.max(1, parseInt(rowsInput.value) || 4);
+  cols = Math.max(1, parseInt(colsInput.value) || 12);
+  rootNote = parseInt(rootNoteInput.value) || 0;
 
-    key.onmousedown = (e) => {
-      e.preventDefault();
-      const freq = calculateFrequency(i - rootNote);
-      playNote(freq, key);
-    };
+  const tuningStr = tuningInput.value.trim();
+  tuningData = parseTuning(tuningStr);
 
-    key.onmouseup = (e) => {
-      e.preventDefault();
-      stopNote(key);
-    };
+  noteNames = noteNamesInput.value
+    .split(/[\s,]+/)
+    .map(n => n.trim())
+    .filter(n => n.length > 0);
 
-    key.onmouseleave = (e) => {
-      e.preventDefault();
-      stopNote(key);
-    };
+  const totalKeys = rows * cols;
+  if (rootNote < 0) rootNote = 0;
+  if (rootNote >= totalKeys) rootNote = totalKeys - 1;
 
-    key.ontouchstart = (e) => {
-      e.preventDefault();
-      const freq = calculateFrequency(i - rootNote);
-      playNote(freq, key);
-    };
-
-    key.ontouchend = (e) => {
-      e.preventDefault();
-      stopNote(key);
-    };
-
-    key.ontouchcancel = (e) => {
-      e.preventDefault();
-      stopNote(key);
-    };
-  });
+  createKeyboard(rows, cols);
 }
 
-function playNote(freq, keyElement) {
-  if (!freq) return;
-  if (activeOscillators.has(keyElement)) return;
-
-  const osc = audioCtx.createOscillator();
-  const gain = audioCtx.createGain();
-
-  osc.type = 'sine';
-  osc.frequency.value = freq;
-  gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
-
-  osc.connect(gain);
-  gain.connect(audioCtx.destination);
-  osc.start();
-
-  activeOscillators.set(keyElement, { osc, gain });
-  keyElement.classList.add('active');
-}
-
-function stopNote(keyElement) {
-  const active = activeOscillators.get(keyElement);
-  if (active) {
-    const now = audioCtx.currentTime;
-    active.gain.gain.cancelScheduledValues(now);
-    active.gain.gain.setTargetAtTime(0, now, 0.05);
-    active.osc.stop(now + 0.05);
-    activeOscillators.delete(keyElement);
-    keyElement.classList.remove('active');
-  }
-}
-
-function calculateFrequency(step) {
-  let mappedStep = step;
-  if (mapping.length > 0 && step >= 0 && step < mapping.length) {
-    mappedStep = mapping[step];
-  }
-
-  const jiLimit = parseJustIntonationTuning(tuning);
-  if (jiLimit) {
-    return getJustIntonationFreq(baseFreq, mappedStep, jiLimit);
-  }
-
-  const ed = parseEqualDivisionTuning(tuning);
-  if (ed) {
-    return getEqualDivisionFreq(baseFreq, mappedStep, ed.divisions, ed.interval);
-  }
-
-  return baseFreq * Math.pow(2, mappedStep / 12);
-}
-
-function parseEqualDivisionTuning(tuningStr) {
-  const match = tuningStr.match(/^(\d+)ed([\d.]+)$/);
-  if (match) {
-    return {
-      divisions: parseInt(match[1], 10),
-      interval: parseFloat(match[2])
-    };
-  }
-  return null;
-}
-
-function parseJustIntonationTuning(tuningStr) {
-  const match = tuningStr.match(/^(\d+)-limit$/);
-  if (match) {
-    return parseInt(match[1], 10);
-  }
-  return null;
-}
-
-function getEqualDivisionFreq(base, step, divisions, interval) {
-  return base * Math.pow(interval, step / divisions);
-}
-
-function getJustIntonationFreq(base, step, limit) {
-  const primes = getPrimesUpTo(limit);
-  let ratio = 1;
-
-  for (let i = 0; i < Math.abs(step); i++) {
-    ratio *= primes[i % primes.length];
-  }
-
-  if (step < 0) ratio = 1 / ratio;
-  return base * ratio;
-}
-
-function getPrimesUpTo(n) {
-  const primes = [];
-  for (let i = 2; i <= n; i++) {
-    if (isPrime(i)) primes.push(i);
-  }
-  return primes;
-}
-
-function isPrime(n) {
-  if (n < 2) return false;
-  for (let i = 2; i * i <= n; i++) {
-    if (n % i === 0) return false;
-  }
-  return true;
-}
-
-// Auto apply on load
+// --- INITIAL SETUP ---
 applySettings();
+
+// Bind apply button
+document.getElementById('applyBtn').addEventListener('click', applySettings);
