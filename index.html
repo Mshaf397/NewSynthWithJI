@@ -1,142 +1,139 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Custom Web Synth</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <style>
-    :root {
-      --bg: #121212;
-      --fg: #e0e0e0;
-      --accent: #1e88e5;
-      --key-bg: #333;
-      --key-active: #1e88e5;
-    }
-
-    body {
-      background-color: var(--bg);
-      color: var(--fg);
-      font-family: sans-serif;
-      margin: 0;
-      padding: 1rem;
-    }
-
-    #controls {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 1rem;
-      margin-bottom: 1rem;
-    }
-
-    #controls label {
-      display: flex;
-      flex-direction: column;
-      font-size: 0.9rem;
-    }
-
-    input, button {
-      padding: 0.5rem;
-      font-size: 1rem;
-      background: #222;
-      color: var(--fg);
-      border: 1px solid #444;
-      border-radius: 4px;
-    }
-
-    button {
-      background: var(--accent);
-      color: white;
-      border: none;
-    }
-
-    #keyboard {
-      display: grid;
-      gap: 0.5rem;
-    }
-
-    .key {
-      background-color: var(--key-bg);
-      color: white;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      border-radius: 4px;
-      height: 60px;
-      user-select: none;
-      touch-action: manipulation;
-      padding: 4px;
-      text-align: center;
-      font-size: 0.85rem;
-    }
-
-    .key .name {
-      font-weight: bold;
-    }
-
-    .key .cent {
-      font-size: 0.7rem;
-      color: #aaa;
-    }
-
-    .key.active {
-      background-color: var(--key-active);
-    }
-
-     (hover: hover) {
-      .key:hover {
-        filter: brightness(1.2);
-      }
-    }
-
-     (max-width: 600px) {
-      .key {
-        height: 40px;
-        font-size: 0.75rem;
-      }
-
-      .key .cent {
-        font-size: 0.6rem;
-      }
-    }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Grid Synth</title>
+<style>
+  body {
+    margin:0; font-family:sans-serif;
+    background:#111; color:#eee;
+    display:flex; flex-direction:column; align-items:center;
+    height:100vh;
+  }
+  .controls {display:flex; flex-wrap:wrap; gap:8px; margin:8px;}
+  .controls label {font-size:0.9rem;}
+  canvas {flex:1; touch-action:none; width:100%;height:100%;}
+</style>
 </head>
 <body>
-  <h1>Custom Web Synth</h1>
-  <div id="controls">
-    <label>
-      Rows:
-      <input type="number" id="rows" value="4" min="1" />
-    </label>
-    <label>
-      Columns:
-      <input type="number" id="cols" value="12" min="1" />
-    </label>
-    <label>
-      Root key (grid index):
-      <input type="number" id="rootNoteBox" value="0" min="0" />
-    </label>
-    <label>
-      Base Frequency (Hz):
-      <input type="number" id="baseFreq" value="440" step="0.01" />
-    </label>
-    <label>
-      Tuning (e.g. 12ed2 or 5-limit):
-      <input type="text" id="tuning" value="12ed2" />
-    </label>
-    <label style="flex: 1 1 100%;">
-      Mapping (comma-separated step indices):
-      <input type="text" id="mapping" placeholder="Optional, e.g. 0,1,4,5,7,9,11" />
-    </label>
-    <label style="flex: 1 1 100%;">
-      Note names (comma-separated):
-      <input type="text" id="noteNames" placeholder="Optional, e.g. C,C#,D,D#,E,F" />
-    </label>
-    <button id="applySettings">Apply Settings</button>
-  </div>
+<div class="controls">
+  <label>Rows: <input type=number id="rows" min=1 max=30 value=8></label>
+  <label>Cols: <input type=number id="cols" min=1 max=30 value=12></label>
+  <label>Base Freq: <input type=number id="baseFreq" value=261.6256 step=0.01></label>
+  <label>Root X: <input type=number id="rootX" value=0></label>
+  <label>Root Y: <input type=number id="rootY" value=0></label>
+  <label>Tuning: <input type=text id="tuning" value="12edo"></label>
+  <label>Generator (c): <input type=number id="gen" value=700.16 step=0.01></label>
+  <label>Periods: <input type=number id="periodSteps" value=12></label>
+  <label>Period Ratio: <input type=text id="periodRatio" value="2/1"></label>
+  <label>H Step: <input type=number id="stepX" value=1></label>
+  <label>V Step: <input type=number id="stepY" value=0></label>
+  <label>Note Names: <input type=text id="noteNames" value="C,C#,D,D#,E,F,F#,G,G#,A,A#,B"></label>
+</div>
+<canvas id="g"></canvas>
+<script>
+const ctx = new (window.AudioContext||window.webkitAudioContext)();
+let oscGain = 0.2;
+let grid=[];
 
-  <div id="keyboard"></div>
+function parseRatio(s){
+  const [a,b]=s.split('/').map(parseFloat);
+  return a/b;
+}
 
-  <script src="synth.js"></script>
+function genTuning(cfg){
+  let freqs = [];
+  if(cfg.tuning.match(/edo$/)){
+    const N=parseInt(cfg.tuning);
+    for(let i=0;i<N;i++){
+      freqs[i]=Math.pow(2,i/N);
+    }
+    return {map:i=>cfg.baseFreq*freqs[i%N]*Math.pow(2,Math.floor(i/N)),size:N};
+  } else {
+    // generator + period
+    const genC=cfg.gen;
+    const steps=cfg.periodSteps;
+    const period=cfg.periodRatio;
+    let cents2ratio = c=>Math.pow(2,c/1200);
+    let base = parseRatio(period);
+    let map=[];
+    for(let i=0;i<steps;i++){
+      map.push(cents2ratio(i*genC)*Math.pow(base, -Math.floor((i*genC)/1200)));
+    }
+    return {map:i=>cfg.baseFreq*map[((i%steps)+steps)%steps]*Math.pow(base,Math.floor(i/steps)), size:steps};
+  }
+}
+
+function setup(){
+  const cfg={
+    rows:+rows.value, cols:+cols.value,
+    baseFreq:+baseFreq.value,
+    tuning:tuning.value,
+    gen:+gen.value,
+    periodSteps:+periodSteps.value,
+    periodRatio:periodRatio.value,
+  };
+  tuningMap=genTuning(cfg);
+  stepX=+stepX.value; stepY=+stepY.value;
+  noteNamesArr=noteNames.value.split(',');
+  rootX0=+rootX.value; rootY0=+rootY.value;
+  drawGrid();
+}
+
+const canvas=g, c2=canvas.getContext('2d');
+function drawGrid(){
+  canvas.width=canvas.clientWidth;
+  canvas.height=canvas.clientHeight;
+  grid=[];
+  const w=canvas.width/cols.value, h=canvas.height/rows.value;
+  for(let y=0;y<rows.value;y++){
+    grid[y]=[];
+    for(let x=0;x<cols.value;x++){
+      const xi=(x-rootX0)*stepX + (rootY0-y)*stepY; // vertical inverted
+      const idx=xi;
+      grid[y][x]=idx;
+      c2.strokeStyle='#444'; c2.strokeRect(x*w,y*h,w,h);
+      const id=(idx%tuningMap.size + tuningMap.size)%tuningMap.size;
+      const nm=noteNamesArr[id]||id;
+      c2.fillStyle='#eee';
+      c2.fillText(nm, x*w+4, y*h+14);
+    }
+  }
+}
+
+let active=[...Array(30)].map(()=>[]);
+canvas.addEventListener('pointerdown', e=>touch(e));
+canvas.addEventListener('pointermove', e=>{if(e.pressure) touch(e)});
+canvas.addEventListener('pointerup', e=>release(e));
+function touch(e){
+  const x=Math.floor(e.offsetX/(canvas.width/cols.value));
+  const y=Math.floor(e.offsetY/(canvas.height/rows.value));
+  if(x<0||y<0||x>=cols.value||y>=rows.value) return;
+  if(active[y][x]) return;
+  const idx=grid[y][x];
+  const freq = tuningMap.map(idx);
+  const osc=ctx.createOscillator();
+  osc.frequency.value=freq;
+  osc.connect(ctx.destination);
+  const g=ctx.createGain();
+  g.gain.value=oscGain;
+  osc.connect(g).connect(ctx.destination);
+  osc.start();
+  active[y][x]={osc,g};
+}
+
+function release(e){
+  for(let y=0;y<rows.value;y++)
+    for(let x=0;x<cols.value;x++)
+      if(active[y][x]){active[y][x].osc.stop(); active[y][x]=null;}
+}
+
+[rows,cols,baseFreq,tuning,gen,periodSteps,periodRatio,stepX,stepY,noteNames,rootX,rootY]
+.forEach(el=>el.addEventListener('input', setup));
+
+window.addEventListener('resize', setup);
+setup();
+</script>
 </body>
 </html>
